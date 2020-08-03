@@ -130,6 +130,33 @@ def restart_post():
             'error': str(e),
         }), 500
 
+@app.route('/dutshutdown', methods=['POST'])
+def dutshutdown_post():
+    try:
+        local_system.dut_shutdown()
+        return flask.jsonify({
+            'success': True,
+            'error': None,
+        })
+    except local_system.Error as e:
+        return flask.jsonify({
+            'success': False,
+            'error': str(e),
+        }), 500
+
+@app.route('/dutrestart', methods=['POST'])
+def dutrestart_post():
+    try:
+        local_system.dut_restart()
+        return flask.jsonify({
+            'success': True,
+            'error': None,
+        })
+    except local_system.Error as e:
+        return flask.jsonify({
+            'success': False,
+            'error': str(e),
+        }), 500
 
 @app.errorhandler(flask_wtf.csrf.CSRFError)
 def handle_csrf_error(e):

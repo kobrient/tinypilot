@@ -93,6 +93,25 @@ function displayPoweringDownUI(restart) {
   document.querySelector(".page-content").appendChild(shutdownMessage);
 }
 
+function displayDutCommandUI(restart) {
+  for (const elementId of [
+    "error-panel",
+    "remote-screen",
+    "keystroke-history",
+    "shutdown-confirmation-panel",
+  ]) {
+    hideElementById(elementId);
+  }
+  const shutdownMessage = document.createElement("h2");
+  if (restart) {
+    shutdownMessage.innerText = "Restarting connected computer...";
+  } else {
+    shutdownMessage.innerText = "Shutting down connected computer...";
+  }
+
+  document.querySelector(".page-content").appendChild(shutdownMessage);
+}
+
 function getCsrfToken() {
   return document
     .querySelector("meta[name='csrf-token']")
@@ -151,6 +170,60 @@ function sendShutdownRequest(restart) {
         showError("Failed to restart TinyPilot device", error);
       } else {
         showError("Failed to shut down TinyPilot device", error);
+      }
+    });
+}
+
+function sendDutCommand(restart) {
+  let route = "/dutshutdown";
+  if (restart) {
+    route = "/dutrestart";
+  }
+  fetch(route, {
+    method: "POST",
+    headers: {
+      "X-CSRFToken": getCsrfToken(),
+    },
+    mode: "same-origin",
+    cache: "no-cache",
+    redirect: "error",
+  })
+    .then((response) => {
+      // A 502 usually means that nginx shutdown before it could process the
+      // response. Treat this as success.
+      if (response.status === 502) {
+        return Promise.resolve({});
+      }
+      if (response.status !== 200) {
+        // See if the error response is JSON.
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+          return response.json().then((data) => {
+            return Promise.reject(new Error(data.error));
+          });
+        }
+        return Promise.reject(new Error(response.statusText));
+      }
+      return response.json();
+    })
+    .then((result) => {
+      if (result.error) {
+        return Promise.reject(new Error(result.error));
+      }
+      displayDutCommandUI(restart);
+    })
+    .catch((error) => {
+      // Depending on timing, the server may not respond to the shutdown request
+      // because it's shutting down. If we get a NetworkError, assume the
+      // shutdown succeeded.
+      if (error.message.indexOf("NetworkError") >= 0) {
+        displayDutCommandUI(restart);
+        return;
+      }
+      if (restart) {
+        showError("Failed to restart DUT", error);
+      } else {
+        showError("Failed to shut down DUT", error);
       }
     });
 }
@@ -287,6 +360,16 @@ document
   .getElementById("confirm-restart")
   .addEventListener("click", function () {
     sendShutdownRequest(/*restart=*/ true);
+  });
+document
+  .getElementById("confirm-dut-shutdown")
+  .addEventListener("click", function () {
+    sendDutCommand(/*restart=*/ false);
+  });
+document
+  .getElementById("confirm-dut-restart")
+  .addEventListener("click", function () {
+    sendDutCommand(/*restart=*/ true);
   });
 document.getElementById("cancel-shutdown").addEventListener("click", () => {
   hideElementById("shutdown-confirmation-panel");

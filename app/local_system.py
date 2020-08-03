@@ -26,6 +26,13 @@ def restart():
     logger.info('Rebooting system')
     return _exec_shutdown(restart=True)
 
+def dut_shutdown():
+    logger.info('Shutting down attached system')
+    return _exec_dut_shutdown()
+
+def dut_restart():
+    logger.info('Restarting attached system')
+    return _exec_dut_restart()
 
 def _exec_shutdown(restart):
     if restart:
@@ -44,3 +51,26 @@ def _exec_shutdown(restart):
         if result.stderr:
             logger.info(result.stderr)
     return True
+
+def _exec_dut_shutdown():
+    result = subprocess.run(["echo", "dutshutdown"], capture_output=True, text=True)
+    if 'failed' in result.stderr.lower():
+        raise DutShutdownError(result.stdout + result.stderr)
+    else:
+        if result.stdout:
+            logger.info(result.stdout)
+        if result.stderr:
+            logger.info(result.stderr)
+    return True
+
+def _exec_dut_restart():
+    result = subprocess.run(["echo", "dutrestart"], capture_output=True, text=True)
+    if 'failed' in result.stderr.lower():
+        raise DutRestartError(result.stdout + result.stderr)
+    else:
+        if result.stdout:
+            logger.info(result.stdout)
+        if result.stderr:
+            logger.info(result.stderr)
+    return True
+
