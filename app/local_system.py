@@ -12,6 +12,11 @@ class Error(Exception):
 class ShutdownError(Error):
     pass
 
+class DutShutdownError(Error):
+    pass
+
+class DutRestartError(Error):
+    pass
 
 def hostname():
     return platform.node()
