@@ -12,6 +12,7 @@ Turn your Raspberry Pi into a browser-based KVM.
 
 * Raspberry Pi OS Stretch or later
 * python3-venv
+* python3-gpiozero
 
 ## Hardware requirements
 
@@ -41,7 +42,7 @@ The following installation steps:
 From your Raspberry Pi device, run the following commands:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/mtlynch/tinypilot/master/quick-install | bash -
+curl -sSL https://raw.githubusercontent.com/kobrient/tinypilot/master/quick-install | bash -
 sudo reboot
 ```
 
@@ -51,19 +52,19 @@ When your Pi reboots, you should be able to access TinyPilot by visiting your Pi
 
 ## Remote installation
 
-If you have Ansible installed on your local machine, you can configure TinyPilot on a Raspberry Pi device using the [TinyPilot Ansible role](https://github.com/mtlynch/ansible-role-tinypilot). To configure TinyPilot remotely, run the following commands from your Ansible control node:
+If you have Ansible installed on your local machine, you can configure TinyPilot on a Raspberry Pi device using the [TinyPilot Ansible role](https://github.com/kobrient/ansible-role-tinypilot). To configure TinyPilot remotely, run the following commands from your Ansible control node:
 
 ```bash
 PI_HOSTNAME="raspberrypi" # Change to your pi's hostname
 PI_SSH_USERNAME="pi"      # Change to your Pi username
 
 # Install the TinyPilot Ansible role
-ansible-galaxy install mtlynch.tinypilot
+ansible-galaxy install kobrient.tinypilot
 
 # Create a minimal Ansible playbook to configure your Pi
 echo "- hosts: $PI_HOSTNAME
   roles:
-    - role: mtlynch.tinypilot" > install.yml
+    - role: kobrient.tinypilot" > install.yml
 
 ansible-playbook \
   --inventory "$PI_HOSTNAME", \
