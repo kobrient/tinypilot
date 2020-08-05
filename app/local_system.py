@@ -58,7 +58,10 @@ def _exec_shutdown(restart):
     return True
 
 def _exec_dut_shutdown():
-    result = subprocess.run(["echo", "dutshutdown"], capture_output=True, text=True)
+    #result = subprocess.run(['./system_scripts/', 'power_hit.py'], capture_output=True, text=True)
+    result = subprocess.run(['python3', 'system_scripts/power_hit.py'], capture_output=True, text=True)
+    #result = subprocess.run(['whoami'], capture_output=True, text=True)
+    #result = subprocess.run(['pwd'], capture_output=True, text=True)
     if 'failed' in result.stderr.lower():
         raise DutShutdownError(result.stdout + result.stderr)
     else:
@@ -69,7 +72,10 @@ def _exec_dut_shutdown():
     return True
 
 def _exec_dut_restart():
-    result = subprocess.run(["echo", "dutrestart"], capture_output=True, text=True)
+    #result = subprocess.run(['./system_scripts/', 'reset_hit.py'], capture_output=True, text=True)
+    result = subprocess.run(['python3', 'system_scripts/reset_hit.py'], capture_output=True, text=True)
+    #result = subprocess.run(['whoami'], capture_output=True, text=True)
+    #result = subprocess.run(['pwd'], capture_output=True, text=True)
     if 'failed' in result.stderr.lower():
         raise DutRestartError(result.stdout + result.stderr)
     else:
