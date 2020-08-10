@@ -17,8 +17,7 @@ fi
 
 pushd $(mktemp -d)
 #Raspberry Pi dependencies:
-sudo apt-get install -y python3-venv
-sudo apt-get install -y python3-gpiozero
+sudo apt-get install -y libssl-dev python3-dev python3-venv python3-gpiozero
 python3 -m venv venv
 . venv/bin/activate
 # Ansible depends on wheel.
@@ -26,6 +25,7 @@ pip install wheel==0.34.2
 pip install ansible==2.9.10
 echo "[defaults]
 roles_path = $PWD
+interpreter_python = /usr/bin/python3
 " > ansible.cfg
 ansible-galaxy install mtlynch.tinypilot
 echo "- hosts: localhost
