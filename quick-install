@@ -27,7 +27,7 @@ pip install ansible==2.9.10
 echo "[defaults]
 roles_path = $PWD
 " > ansible.cfg
-ansible-galaxy install korient.tinypilot
+ansible-galaxy install kobrient.tinypilot
 echo "- hosts: localhost
   connection: local
   become: true
