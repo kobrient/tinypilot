@@ -37,6 +37,10 @@ The simple circuit needed to provide Power and Reset control over the controlled
 
 ![GPIO Circuit](https://raw.githubusercontent.com/kobrient/tinypilot/master/tinypilot_gpio_circuit.png)
 
+Pin 4 on the PC817 ICs should be connected to the respective positive pin for the front panel switch and Pin 3 should be connectected to the associated negative pins.
+
+![ATX Front Panel Header](https://raw.githubusercontent.com/kobrient/tinypilot/master/ATX_MB_FP_pinout.png)
+
 ## Simple installation
 
 The following installation steps:
