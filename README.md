@@ -6,7 +6,7 @@
 
 Turn your Raspberry Pi into a browser-based KVM.
 
-![TinyPilot demo](https://raw.githubusercontent.com/mtlynch/tinypilot/master/demo.gif)
+![TinyPilot demo](https://raw.githubusercontent.com/kobrient/tinypilot/master/demo.gif)
 
 ## Pre-requisites
 
@@ -30,6 +30,12 @@ Turn your Raspberry Pi into a browser-based KVM.
   * If your target computer has VGA output, the above adapter is [confirmed to work](https://github.com/mtlynch/tinypilot/issues/76#issuecomment-664736402) with TinyPilot.
 
 See ["TinyPilot: Build a KVM Over IP for Under $100"](https://mtlynch.io/tinypilot/#how-to-build-your-own-tinypilot) for a more detailed tutorial on how to assemble these parts to create a TinyPilot.
+
+## GPIO Circuit
+
+The simple circuit needed to provide Power and Reset control over the controlled PC. This assumes the PC under control uses a standard ATX style motherboard with a header exposed for front panel reset and power switches.
+
+![GPIO Circuit](https://raw.githubusercontent.com/kobrient/tinypilot/master/tinypilot_gpio_circuit.png)
 
 ## Simple installation
 
