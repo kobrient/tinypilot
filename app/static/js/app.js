@@ -106,18 +106,15 @@ function displayPoweringDownUI(restart) {
 
 function displayDutCommandUI(restart) {
   for (const elementId of [
-    "error-panel",
-    "remote-screen",
-    "keystroke-history",
     "shutdown-confirmation-panel",
   ]) {
     hideElementById(elementId);
   }
   const shutdownMessage = document.createElement("h2");
   if (restart) {
-    shutdownMessage.innerText = "Restarting connected computer...";
+    shutdownMessage.innerText = "Triggering restart switch on connected computer...";
   } else {
-    shutdownMessage.innerText = "Shutting down connected computer...";
+    shutdownMessage.innerText = "Triggering power switch on connected computer...";
   }
 
   document.querySelector(".page-content").appendChild(shutdownMessage);
