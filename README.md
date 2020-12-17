@@ -1,18 +1,21 @@
 # TinyPilot
 
-[![CircleCI](https://circleci.com/gh/mtlynch/tinypilot.svg?style=svg)](https://circleci.com/gh/mtlynch/tinypilot) [![License](http://img.shields.io/:license-mit-blue.svg?style=flat-square)](LICENSE)
+[![CircleCI](https://circleci.com/gh/mtlynch/tinypilot.svg?style=svg)](https://circleci.com/gh/mtlynch/tinypilot) [![License](http://img.shields.io/:license-mit-blue.svg?style=flat-square)](LICENSE) [![Reddit](https://img.shields.io/badge/reddit-join-orange?logo=reddit)](https://www.reddit.com/r/tinypilot)
 
 ## Overview
 
 Turn your Raspberry Pi into a browser-based KVM.
 
-![TinyPilot demo](https://raw.githubusercontent.com/kobrient/tinypilot/master/demo.gif)
+![TinyPilot demo](https://raw.githubusercontent.com/kobrient/tinypilot/master/readme-assets/demo.gif)
 
-## Pre-requisites
+## Features
 
-* Raspberry Pi OS Stretch or later
-* python3-venv
-* python3-gpiozero
+* Video capture (HDMI/DVI/VGA)
+* Keyboard forwarding
+* Mouse forwarding
+* Power and Reset switch control
+* Fullscreen mode
+* Paste text from clipboard
 
 ## Hardware requirements
 
@@ -35,21 +38,21 @@ See ["TinyPilot: Build a KVM Over IP for Under $100"](https://mtlynch.io/tinypil
 
 The simple circuit needed to provide Power and Reset control over the controlled PC. This assumes the PC under control uses a standard ATX style motherboard with a header exposed for front panel reset and power switches.
 
-![GPIO Circuit](https://raw.githubusercontent.com/kobrient/tinypilot/master/tinypilot_gpio_circuit.png)
+![GPIO Circuit](https://raw.githubusercontent.com/kobrient/tinypilot/master/readme-assets/tinypilot_gpio_circuit.png)
 
 Pin 4 on the PC817 ICs should be connected to the respective positive pin for the front panel switch and Pin 3 should be connectected to the associated negative pins.
 
-![ATX Front Panel Header](https://raw.githubusercontent.com/kobrient/tinypilot/master/ATX_MB_FP_pinout.png)
+![ATX Front Panel Header](https://raw.githubusercontent.com/kobrient/tinypilot/master/readme-assets/ATX_MB_FP_pinout.png)
+
+
+## Pre-requisites
+
+* Raspberry Pi OS Stretch or later
+* python3-venv
 
 ## Simple installation
 
-The following installation steps:
-
-* Create a service account for TinyPilot with limited priviliges.
-* Install TinyPilot as a systemd service so it runs automatically on every boot.
-* Install TinyPilot's dependencies.
-
-From your Raspberry Pi device, run the following commands:
+You can install TinyPilot on a compatible Raspberry Pi in just two commands.
 
 ```bash
 curl \
@@ -60,47 +63,20 @@ curl \
   sudo reboot
 ```
 
+The installation process:
+
+* Creates a service account for TinyPilot with limited priviliges.
+* Installs TinyPilot as a systemd service so it runs automatically on every boot.
+* Installs TinyPilot's dependencies.
+
 When your Pi reboots, you should be able to access TinyPilot by visiting your Pi hostname in the browser. For example, if your device is named `raspberrypi`:
 
 * [http://raspberrypi/](http://raspberrypi/)
 
-## Remote installation
+### Other installation options
 
-If you have Ansible installed on your local machine, you can configure TinyPilot on a Raspberry Pi device using the [TinyPilot Ansible role](https://github.com/kobrient/ansible-role-tinypilot). To configure TinyPilot remotely, run the following commands from your Ansible control node:
-
-```bash
-PI_HOSTNAME="raspberrypi" # Change to your pi's hostname
-PI_SSH_USERNAME="pi"      # Change to your Pi username
-
-# Install the TinyPilot Ansible role
-ansible-galaxy install kobrient.tinypilot
-
-# Create a minimal Ansible playbook to configure your Pi
-echo "- hosts: $PI_HOSTNAME
-  roles:
-    - role: kobrient.tinypilot" > install.yml
-
-ansible-playbook \
-  --inventory "$PI_HOSTNAME", \
-  --user "$PI_SSH_USERNAME" \
-  --ask-pass \
-  --become \
-  --become-method sudo \
-  install.yml
-
-ansible \
-  "$PI_HOSTNAME" \
-  -m reboot \
-  --inventory "$PI_HOSTNAME", \
-  --user "$PI_SSH_USERNAME" \
-  --ask-pass \
-  --become \
-  --become-method sudo
-```
-
-After running these commands, you should be able to access TinyPilot through a web browser at:
-
-* [http://raspberrypi/](http://raspberrypi/)
+* [Advanced installation options](https://github.com/mtlynch/tinypilot/wiki/Installation-Options#advanced-installation)
+* [Remote installation via Ansible](https://github.com/mtlynch/tinypilot/wiki/Installation-Options#remote-installation)
 
 ## Developer installation
 
@@ -109,7 +85,6 @@ If you're interesting in contributing to TinyPilot, follow these instructions to
 ```bash
 python3.7 -m venv venv
 . venv/bin/activate
-pip install --requirement requirements.txt
 pip install --requirement dev_requirements.txt
 hooks/enable_hooks
 ```
@@ -117,7 +92,7 @@ hooks/enable_hooks
 To run TinyPilot's build scripts, run:
 
 ```bash
-./run_build
+./dev-scripts/build-python
 ```
 
 To enable TinyPilot's Git hooks, run:
@@ -129,8 +104,9 @@ To enable TinyPilot's Git hooks, run:
 To run TinyPilot on a non-Pi machine, run:
 
 ```bash
-PORT=8000 HID_PATH=/dev/null ./app/main.py
+./dev-scripts/serve-dev
 ```
+Then navigate to localhost:8000 in a web browser
 
 ## Options
 
@@ -140,11 +116,23 @@ TinyPilot accepts various options through environment variables:
 |----------------------|--------------|-------------|
 | `HOST`               | `0.0.0.0`    | Network interface to listen for incoming connections. |
 | `PORT`               | `8000`       | HTTP port to listen for incoming connections. |
-| `HID_PATH`           | `/dev/hidg0` | Path to keyboard HID interface. |
+| `KEYBOARD_PATH`      | `/dev/hidg0` | Path to keyboard HID interface. |
+| `MOUSE_PATH`         | `/dev/hidg1` | Path to mouse HID interface. |
+| `DEBUG`              | undefined    | Set to `1` to enable debug logging. |
 
 ## Upgrades
 
-The installation script is idempotent, so you can upgrade to the latest stable release of TinyPilot and its dependencies by just re-running [the quick install script](#simple-installation).
+To upgrade to the latest version of TinyPilot, run the upgrade script:
+
+```bash
+/opt/tinypilot/scripts/upgrade && sudo reboot
+```
+
+## Diagnostics
+
+If you're having trouble with TinyPilot, you can run `/opt/tinypilot/dev-scripts/dump-logs` to print logs for all the software components related to TinyPilot. This log is useful if you [file a bug report](https://github.com/mtlynch/tinypilot/issues/new?assignees=&labels=&template=bug_report.md&title=).
+
+You can read more details about the logs [in the wiki](https://github.com/mtlynch/tinypilot/wiki/Troubleshooting-and-Diagnostics).
 
 ## Security considerations
 
@@ -156,8 +144,10 @@ If you need authentication, the simplest solution would be to adjust your Nginx 
 
 If this project is useful to you, consider making a financial contribution to support its development:
 
-* [paypal.me/mtlynchio](https://paypal.me/mtlynchio)
+* [paypal.me/tinypilotkvm](https://paypal.me/tinypilotkvm)
 
 ## See also
 
+* [TinyPilot Wiki](https://github.com/mtlynch/tinypilot/wiki): Guides for tasks related to TinyPilot.
 * [TinyPilot Ansible Role](https://github.com/mtlynch/ansible-role-tinypilot): Use [Ansible](https://docs.ansible.com/ansible/latest/index.html) to install TinyPilot and all dependencies as a systemd service.
+

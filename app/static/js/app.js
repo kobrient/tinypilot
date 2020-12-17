@@ -1,18 +1,26 @@
 "use strict";
 
-const keyboardSocket = io();
-let poweringDown = false;
-let connectedToKeyboardService = false;
-// The OS and browser capture some key combinations that involve modifier keys
-// before they can reach JavaScript, so allow the user to set them manually.
-let manualModifiers = {
-  meta: false,
-  alt: false,
-  shift: false,
-  ctrl: false,
-};
-let keystrokeId = 0;
-const processingQueue = [];
+import {
+  isModifierCode,
+  findKeyCode,
+  keystrokeToCanonicalCode,
+  requiresShiftKey,
+} from "./keycodes.js";
+import { sendKeystroke } from "./keystrokes.js";
+import * as settings from "./settings.js";
+
+const socket = io();
+let connectedToServer = false;
+
+const screenCursorOptions = [
+  "disabled", // To show on disconnect
+  "default", // Note that this is the browser default, not TinyPilot's default.
+  "none",
+  "crosshair",
+  "dot",
+  "pointer",
+  "cell",
+];
 
 // A map of keycodes to booleans indicating whether the key is currently pressed.
 let keyState = {};
@@ -25,83 +33,56 @@ function showElementById(id, display = "block") {
   document.getElementById(id).style.display = display;
 }
 
-function shouldDisplayKeyHistory() {
-  return document.getElementById("recent-keys").style.visibility !== "hidden";
-}
-
-// Limit display of recent keys to the last N keys, where limit = N.
-function limitRecentKeys(limit) {
-  const recentKeysDiv = document.getElementById("recent-keys");
-  while (recentKeysDiv.childElementCount > limit) {
-    recentKeysDiv.removeChild(recentKeysDiv.firstChild);
-  }
-}
-
-function addKeyCard(key, keystrokeId) {
-  if (!shouldDisplayKeyHistory()) {
-    return;
-  }
-  const card = document.createElement("div");
-  card.classList.add("key-card");
-  let keyLabel = key;
-  if (key === " ") {
-    keyLabel = "Space";
-  }
-  card.style.fontSize = `${1.1 - 0.08 * keyLabel.length}em`;
-  card.innerText = keyLabel;
-  card.setAttribute("keystroke-id", keystrokeId);
-  document.getElementById("recent-keys").appendChild(card);
-  limitRecentKeys(10);
-}
-
-function updateKeyStatus(keystrokeId, success) {
-  if (!shouldDisplayKeyHistory()) {
-    return;
-  }
-  const recentKeysDiv = document.getElementById("recent-keys");
-  const cards = recentKeysDiv.children;
-  for (let i = 0; i < cards.length; i++) {
-    const card = cards[i];
-    if (parseInt(card.getAttribute("keystroke-id")) === keystrokeId) {
-      if (success) {
-        card.classList.add("processed-key-card");
-      } else {
-        card.classList.add("unsupported-key-card");
-      }
-      return;
-    }
-  }
-}
-
 function showError(errorType, errorMessage) {
   document.getElementById("error-type").innerText = errorType;
   document.getElementById("error-message").innerText = errorMessage;
   showElementById("error-panel");
 }
 
-function hideErrorIfType(errorType) {
-  if (document.getElementById("error-type").innerText === errorType) {
-    hideElementById("error-panel");
-  }
-}
-
 function displayPoweringDownUI(restart) {
-  for (const elementId of [
-    "error-panel",
-    "remote-screen",
-    "keystroke-history",
-    "shutdown-confirmation-panel",
-  ]) {
+  for (const elementId of ["error-panel", "remote-screen", "keystroke-panel"]) {
     hideElementById(elementId);
   }
-  const shutdownMessage = document.createElement("h2");
+  const shutdownWait = document.getElementById("shutdown-wait");
   if (restart) {
-    shutdownMessage.innerText = "Restarting TinyPilot Device...";
+    shutdownWait.message = "Restarting TinyPilot Device...";
   } else {
-    shutdownMessage.innerText = "Shutting down TinyPilot Device...";
+    shutdownWait.message = "Shutting down TinyPilot Device...";
+    setTimeout(() => {
+      const shutdownWait = document.getElementById("shutdown-wait");
+      if (shutdownWait.show) {
+        shutdownWait.message = "Shutdown complete";
+        shutdownWait.hideSpinner();
+      }
+    }, 30 * 1000);
   }
+  document.getElementById("shutdown-dialog").show = false;
+  document.getElementById("shutdown-wait").show = true;
+}
 
-  document.querySelector(".page-content").appendChild(shutdownMessage);
+function displayDutPoweringDownUI(restart) {
+  const shutdownWait = document.getElementById("shutdown-wait");
+  if (restart) {
+    shutdownWait.message = "Toggled restart switch on connected PC. Please refresh.";
+    shutdownWait.hideSpinner();
+  } else {
+    shutdownWait.message = "Toggled power switch on connected PC. Please refresh.";
+    shutdownWait.hideSpinner();
+  }
+  document.getElementById("shutdown-dialog").show = false;
+  document.getElementById("shutdown-wait").show = true;
+}
+
+function isKeyPressed(code) {
+  return code in keyState && keyState[code];
+}
+
+function isIgnoredKeystroke(code) {
+  // Ignore the keystroke if this is a modifier keycode and the modifier was
+  // already pressed. Otherwise, something like holding down the Shift key
+  // is sent as multiple Shift key presses, which has special meaning on
+  // certain OSes.
+  return isModifierCode(code) && isKeyPressed(code);
 }
 
 function displayDutCommandUI(restart) {
@@ -120,273 +101,318 @@ function displayDutCommandUI(restart) {
   document.querySelector(".page-content").appendChild(shutdownMessage);
 }
 
-function getCsrfToken() {
-  return document
-    .querySelector("meta[name='csrf-token']")
-    .getAttribute("content");
-}
 
-function sendShutdownRequest(restart) {
-  let route = "/shutdown";
-  if (restart) {
-    route = "/restart";
+function recalculateMouseEventThrottle(
+  currentThrottle,
+  lastRtt,
+  lastWriteSucceeded
+) {
+  const maxThrottleInMilliseconds = 2000;
+  if (!lastWriteSucceeded) {
+    // Apply a 500 ms penalty to the throttle every time an event fails.
+    return Math.min(currentThrottle + 500, maxThrottleInMilliseconds);
   }
-  fetch(route, {
-    method: "POST",
-    headers: {
-      "X-CSRFToken": getCsrfToken(),
-    },
-    mode: "same-origin",
-    cache: "no-cache",
-    redirect: "error",
-  })
-    .then((response) => {
-      // A 502 usually means that nginx shutdown before it could process the
-      // response. Treat this as success.
-      if (response.status === 502) {
-        return Promise.resolve({});
-      }
-      if (response.status !== 200) {
-        // See if the error response is JSON.
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.indexOf("application/json") !== -1) {
-          return response.json().then((data) => {
-            return Promise.reject(new Error(data.error));
-          });
-        }
-        return Promise.reject(new Error(response.statusText));
-      }
-      return response.json();
-    })
-    .then((result) => {
-      if (result.error) {
-        return Promise.reject(new Error(result.error));
-      }
-      poweringDown = true;
-      displayPoweringDownUI(restart);
-    })
-    .catch((error) => {
-      // Depending on timing, the server may not respond to the shutdown request
-      // because it's shutting down. If we get a NetworkError, assume the
-      // shutdown succeeded.
-      if (error.message.indexOf("NetworkError") >= 0) {
-        poweringDown = true;
-        displayPoweringDownUI(restart);
-        return;
-      }
-      if (restart) {
-        showError("Failed to restart TinyPilot device", error);
-      } else {
-        showError("Failed to shut down TinyPilot device", error);
-      }
-    });
+  // Assume that the server can process messages in roughly half the round trip
+  // time between an event message and its response.
+  const roughSendTime = lastRtt / 2;
+
+  // Set the new throttle to a weighted average between the last throttle time
+  // and the last send time, with a 2/3 bias toward the last send time.
+  const newThrottle = (roughSendTime * 2 + currentThrottle) / 3;
+  return Math.min(newThrottle, maxThrottleInMilliseconds);
 }
 
-function sendDutCommand(restart) {
-  let route = "/dutshutdown";
-  if (restart) {
-    route = "/dutrestart";
+function unixTime() {
+  return new Date().getTime();
+}
+
+function browserLanguage() {
+  if (navigator.languages) {
+    return navigator.languages[0];
   }
-  fetch(route, {
-    method: "POST",
-    headers: {
-      "X-CSRFToken": getCsrfToken(),
-    },
-    mode: "same-origin",
-    cache: "no-cache",
-    redirect: "error",
-  })
-    .then((response) => {
-      // A 502 usually means that nginx shutdown before it could process the
-      // response. Treat this as success.
-      if (response.status === 502) {
-        return Promise.resolve({});
-      }
-      if (response.status !== 200) {
-        // See if the error response is JSON.
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.indexOf("application/json") !== -1) {
-          return response.json().then((data) => {
-            return Promise.reject(new Error(data.error));
-          });
-        }
-        return Promise.reject(new Error(response.statusText));
-      }
-      return response.json();
-    })
-    .then((result) => {
-      if (result.error) {
-        return Promise.reject(new Error(result.error));
-      }
-      displayDutCommandUI(restart);
-    })
-    .catch((error) => {
-      // Depending on timing, the server may not respond to the shutdown request
-      // because it's shutting down. If we get a NetworkError, assume the
-      // shutdown succeeded.
-      if (error.message.indexOf("NetworkError") >= 0) {
-        displayDutCommandUI(restart);
-        return;
-      }
-      if (restart) {
-        showError("Failed to restart DUT", error);
-      } else {
-        showError("Failed to shut down DUT", error);
-      }
-    });
+  return navigator.language || navigator.userLanguage;
 }
 
-function toggleManualModifier(modifier) {
-  manualModifiers[modifier] = !manualModifiers[modifier];
-}
-
-function clearManualModifiers() {
-  for (var modifier in manualModifiers) {
-    manualModifiers[modifier] = false;
+// Send a keystroke message to the backend, and add a key card to the web UI.
+function processKeystroke(keystroke) {
+  // On Android, when the user is typing with autocomplete enabled, the browser
+  // sends dummy keydown events with a keycode of 229. Ignore these events, as
+  // there's no way to map it to a real key.
+  if (keystroke.keyCode === 229) {
+    resolve({});
   }
-  for (const button of document.getElementsByClassName("manual-modifier-btn")) {
-    button.classList.remove("pressed");
-    button.blur();
-  }
-}
-
-function isModifierKeyCode(keyCode) {
-  const modifierKeyCodes = [16, 17, 18, 91];
-  return modifierKeyCodes.indexOf(keyCode) >= 0;
-}
-
-function isKeycodeAlreadyPressed(keyCode) {
-  return keyCode in keyState && keyState[keyCode];
-}
-
-function isIgnoredKeystroke(keyCode) {
-  // Ignore the keystroke if this is a modifier keycode and the modifier was
-  // already pressed.
-  return isModifierKeyCode(keyCode) && isKeycodeAlreadyPressed(keyCode);
-}
-
-function onKeyboardSocketConnect() {
-  connectedToKeyboardService = true;
-  showElementById("status-connected", "flex");
-  hideElementById("status-disconnected");
-
-  hideErrorIfType("Keyboard Connection Error");
-}
-
-function onKeyboardSocketDisconnect(reason) {
-  connectedToKeyboardService = false;
-  hideElementById("status-connected");
-  showElementById("status-disconnected", "flex");
-
-  // If user powered down the device, don't display an error message about
-  // disconnecting from the keyboard service.
-  if (poweringDown) {
+  const keyCard = document
+    .querySelector("key-history")
+    .addKeyCard(keystroke.key);
+  const result = sendKeystroke(socket, keystroke);
+  if (!keyCard) {
     return;
   }
-  showError("Keyboard Connection Error", reason);
+  result
+    .then(() => {
+      keyCard.succeeded = true;
+    })
+    .catch(() => {
+      keyCard.failed = true;
+    });
+}
+
+function onSocketConnect() {
+  if (document.getElementById("shutdown-wait").show) {
+    location.reload();
+  } else {
+    connectedToServer = true;
+    document.getElementById("connection-indicator").connected = true;
+    setCursor(settings.getScreenCursor());
+  }
+}
+
+function onSocketDisconnect(reason) {
+  setCursor("disabled", false);
+  connectedToServer = false;
+  const connectionIndicator = document.getElementById("connection-indicator");
+  connectionIndicator.connected = false;
+  connectionIndicator.disconnectReason = reason;
+  document.getElementById("app").focus();
 }
 
 function onKeyDown(evt) {
-  if (!connectedToKeyboardService) {
+  if (isPasteOverlayShowing()) {
     return;
   }
-  if (isIgnoredKeystroke(evt.keyCode)) {
+
+  const code = keystrokeToCanonicalCode(evt);
+
+  if (isIgnoredKeystroke(code)) {
     return;
   }
-  keyState[evt.keyCode] = true;
+
+  keyState[code] = true;
+
+  if (!connectedToServer) {
+    return;
+  }
   if (!evt.metaKey) {
     evt.preventDefault();
-    addKeyCard(evt.key, keystrokeId);
-    processingQueue.push(keystrokeId);
-    keystrokeId++;
   }
 
-  let location = null;
-  if (evt.location === 1) {
-    location = "left";
-  } else if (evt.location === 2) {
-    location = "right";
-  }
+  const onScreenKeyboard = document.getElementById("on-screen-keyboard");
 
-  keyboardSocket.emit("keystroke", {
-    metaKey: evt.metaKey || manualModifiers.meta,
-    altKey: evt.altKey || manualModifiers.alt,
-    shiftKey: evt.shiftKey || manualModifiers.shift,
-    ctrlKey: evt.ctrlKey || manualModifiers.ctrl,
+  processKeystroke({
+    metaKey: evt.metaKey || onScreenKeyboard.isMetaKeyPressed,
+    altKey: evt.altKey || onScreenKeyboard.isLeftAltKeyPressed,
+    shiftKey: evt.shiftKey || onScreenKeyboard.isShiftKeyPressed,
+    ctrlKey: evt.ctrlKey || onScreenKeyboard.isCtrlKeyPressed,
+    altGraphKey:
+      isKeyPressed("AltRight") || onScreenKeyboard.isRightAltKeyPressed,
+    sysrqKey: onScreenKeyboard.isSysrqKeyPressed,
     key: evt.key,
-    keyCode: evt.keyCode,
-    location: location,
+    code: code,
   });
-  clearManualModifiers();
+}
+
+function sendMouseEvent(
+  buttons,
+  relativeX,
+  relativeY,
+  verticalWheelDelta,
+  horizontalWheelDelta
+) {
+  if (!connectedToServer) {
+    return;
+  }
+  const remoteScreen = document.getElementById("remote-screen");
+  const requestStartTime = unixTime();
+  socket.emit(
+    "mouse-event",
+    {
+      buttons,
+      relativeX,
+      relativeY,
+      verticalWheelDelta,
+      horizontalWheelDelta,
+    },
+    (response) => {
+      const requestEndTime = unixTime();
+      const requestRtt = requestEndTime - requestStartTime;
+      remoteScreen.millisecondsBetweenMouseEvents = recalculateMouseEventThrottle(
+        remoteScreen.millisecondsBetweenMouseEvents,
+        requestRtt,
+        response.success
+      );
+    }
+  );
 }
 
 function onKeyUp(evt) {
-  keyState[evt.keyCode] = false;
-  if (!connectedToKeyboardService) {
+  if (isPasteOverlayShowing()) {
     return;
   }
-  if (isModifierKeyCode(evt.keyCode)) {
-    keyboardSocket.emit("keyRelease");
+  const code = keystrokeToCanonicalCode(evt);
+  keyState[code] = false;
+  if (!connectedToServer) {
+    return;
+  }
+  if (isModifierCode(code)) {
+    socket.emit("keyRelease");
   }
 }
 
-function onManualModifierButtonClicked(evt) {
-  toggleManualModifier(evt.target.getAttribute("modifier"));
-  if (evt.target.classList.contains("pressed")) {
-    evt.target.classList.remove("pressed");
-  } else {
-    evt.target.classList.add("pressed");
+// Translate a single character into a keystroke and sends it to the backend.
+function processTextCharacter(textCharacter, language) {
+  // Ignore carriage returns.
+  if (textCharacter === "\r") {
+    return;
+  }
+
+  const code = findKeyCode([textCharacter.toLowerCase()], language);
+  let friendlyName = textCharacter;
+  // Give cleaner names to keys so that they render nicely in the history.
+  if (textCharacter === "\n") {
+    friendlyName = "Enter";
+  } else if (textCharacter === "\t") {
+    friendlyName = "Tab";
+  }
+
+  processKeystroke({
+    metaKey: false,
+    altKey: false,
+    shiftKey: requiresShiftKey(textCharacter),
+    ctrlKey: false,
+    altGraphKey: false,
+    sysrqKey: false,
+    key: friendlyName,
+    code: code,
+  });
+}
+
+// Translate a string of text into individual keystrokes and sends them to the
+// backend.
+function processTextInput(textInput) {
+  const language = browserLanguage();
+  for (const textCharacter of textInput) {
+    processTextCharacter(textCharacter, language);
   }
 }
 
-function onDisplayHistoryChanged(evt) {
-  if (evt.target.checked) {
-    document.getElementById("recent-keys").style.visibility = "visible";
-  } else {
-    document.getElementById("recent-keys").style.visibility = "hidden";
-    limitRecentKeys(0);
+function setCursor(cursor, save = true) {
+  // Ensure the correct cursor option displays as active in the navbar.
+  if (save) {
+    for (const cursorListItem of document.querySelectorAll("#cursor-list li")) {
+      if (cursor === cursorListItem.getAttribute("cursor")) {
+        cursorListItem.classList.add("nav-selected");
+      } else {
+        cursorListItem.classList.remove("nav-selected");
+      }
+    }
+    settings.setScreenCursor(cursor);
+  }
+  if (connectedToServer) {
+    document.getElementById("remote-screen").cursor = cursor;
   }
 }
 
-document.querySelector("body").addEventListener("keydown", onKeyDown);
-document.querySelector("body").addEventListener("keyup", onKeyUp);
+document.onload = document.getElementById("app").focus();
+
+document.addEventListener("keydown", onKeyDown);
+document.addEventListener("keyup", onKeyUp);
+
 document
-  .getElementById("display-history-checkbox")
-  .addEventListener("change", onDisplayHistoryChanged);
+  .getElementById("remote-screen")
+  .addEventListener("mouse-event", (evt) => {
+    sendMouseEvent(
+      evt.detail.buttons,
+      evt.detail.relativeX,
+      evt.detail.relativeY,
+      evt.detail.verticalWheelDelta,
+      evt.detail.horizontalWheelDelta
+    );
+  });
 document.getElementById("power-btn").addEventListener("click", () => {
-  showElementById("shutdown-confirmation-panel");
+  document.getElementById("shutdown-dialog").show = true;
 });
 document.getElementById("hide-error-btn").addEventListener("click", () => {
   hideElementById("error-panel");
 });
-document
-  .getElementById("confirm-shutdown")
-  .addEventListener("click", function () {
-    sendShutdownRequest(/*restart=*/ false);
-  });
-document
-  .getElementById("confirm-restart")
-  .addEventListener("click", function () {
-    sendShutdownRequest(/*restart=*/ true);
-  });
-document
-  .getElementById("confirm-dut-shutdown")
-  .addEventListener("click", function () {
-    sendDutCommand(/*restart=*/ false);
-  });
-document
-  .getElementById("confirm-dut-restart")
-  .addEventListener("click", function () {
-    sendDutCommand(/*restart=*/ true);
-  });
-document.getElementById("cancel-shutdown").addEventListener("click", () => {
-  hideElementById("shutdown-confirmation-panel");
-});
 for (const button of document.getElementsByClassName("manual-modifier-btn")) {
   button.addEventListener("click", onManualModifierButtonClicked);
 }
-keyboardSocket.on("connect", onKeyboardSocketConnect);
-keyboardSocket.on("disconnect", onKeyboardSocketDisconnect);
-keyboardSocket.on("keystroke-received", (data) => {
-  updateKeyStatus(processingQueue.shift(), data.success);
+document.getElementById("screenshot-btn").addEventListener("click", (evt) => {
+  evt.target.download = "TinyPilot-" + new Date().toISOString() + ".jpg";
 });
+document.getElementById("fullscreen-btn").addEventListener("click", (evt) => {
+  document.getElementById("remote-screen").fullscreen = true;
+  evt.preventDefault();
+});
+document.getElementById("paste-btn").addEventListener("click", () => {
+  showPasteOverlay();
+});
+document
+  .getElementById("paste-overlay")
+  .addEventListener("paste-text", (evt) => {
+    processTextInput(evt.detail);
+
+    // Give focus back to the app for normal text input.
+    document.getElementById("app").focus();
+  });
+document
+  .getElementById("shutdown-dialog")
+  .addEventListener("shutdown-started", (evt) => {
+    displayPoweringDownUI(evt.detail.restart);
+  });
+document
+  .getElementById("shutdown-dialog")
+  .addEventListener("shutdown-failure", (evt) => {
+    showError(evt.detail.summary, evt.detail.detail);
+  });
+document
+  .getElementById("shutdown-dialog")
+  .addEventListener("dut-shutdown-started", (evt) => {
+    displayDutPoweringDownUI(evt.detail.restart);
+  });
+document
+  .getElementById("shutdown-dialog")
+  .addEventListener("dut-shutdown-failure", (evt) => {
+    showError(evt.detail.summary, evt.detail.detail);
+  });
+//document
+//  .getElementById("confirm-dut-shutdown")
+//  .addEventListener("click", function () {
+//    sendDutCommand(/*restart=*/ false);
+//  });
+//document
+//  .getElementById("confirm-dut-restart")
+//  .addEventListener("click", function () {
+//    sendDutCommand(/*restart=*/ true);
+//  });
+
+const keyHistory = document.querySelector("key-history");
+keyHistory.show = settings.isKeyHistoryEnabled();
+keyHistory.addEventListener("history-enabled", () => {
+  settings.enableKeyHistory();
+});
+keyHistory.addEventListener("history-disabled", () => {
+  settings.disableKeyHistory();
+});
+
+// Add cursor options to navbar.
+const cursorList = document.getElementById("cursor-list");
+for (const cursorOption of screenCursorOptions.splice(1)) {
+  const cursorLink = document.createElement("a");
+  cursorLink.setAttribute("href", "#");
+  cursorLink.innerText = cursorOption;
+  cursorLink.addEventListener("click", (evt) => {
+    setCursor(cursorOption);
+    evt.preventDefault();
+  });
+  const listItem = document.createElement("li");
+  listItem.appendChild(cursorLink);
+  listItem.classList.add("cursor-option");
+  listItem.setAttribute("cursor", cursorOption);
+  if (cursorOption === settings.getScreenCursor()) {
+    listItem.classList.add("nav-selected");
+  }
+  cursorList.appendChild(listItem);
+}
+socket.on("connect", onSocketConnect);
+socket.on("disconnect", onSocketDisconnect);

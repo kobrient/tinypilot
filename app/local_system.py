@@ -59,6 +59,7 @@ def _exec_shutdown(restart):
 
 def _exec_dut_shutdown():
     result = subprocess.run(['power_hit.py'], capture_output=True, text=True)
+    #result = subprocess.run(['echo', 'dutshutdown'], capture_output=True, text=True)
     if 'failed' in result.stderr.lower():
         raise DutShutdownError(result.stdout + result.stderr)
     else:
@@ -70,6 +71,7 @@ def _exec_dut_shutdown():
 
 def _exec_dut_restart():
     result = subprocess.run(['reset_hit.py'], capture_output=True, text=True)
+    #result = subprocess.run(['echo', 'dutrestart'], capture_output=True, text=True)
     if 'failed' in result.stderr.lower():
         raise DutRestartError(result.stdout + result.stderr)
     else:
